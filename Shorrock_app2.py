@@ -1,116 +1,153 @@
-import streamlit as st
-
-# --- PASSWORD CHECK ---
-def check_password():
-    def password_entered():
-        if st.session_state["password"] == "Shorrocks":  # change this
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]  # cleanup
-        else:
-            st.session_state["password_correct"] = False
-
-    if "password_correct" not in st.session_state:
-        st.text_input("🔒 Enter password:", type="password", on_change=password_entered, key="password")
-        return False
-    elif not st.session_state["password_correct"]:
-        st.text_input("🔒 Enter password:", type="password", on_change=password_entered, key="password")
-        st.error("❌ Incorrect password")
-        return False
-    else:
-        return True
-
-if not check_password():
-    st.stop()
-# --- END PASSWORD CHECK ---
-
+import itertools
+import math
+import string
+from fractions import Fraction
 
 import pandas as pd
-import itertools
-import time
-import math
+import streamlit as st
 
-st.set_page_config(page_title="Shorrocks Decomposition App")
+
+st.set_page_config(
+    page_title="Shorrocks Dimensional Decomposition",
+    page_icon="📊",
+    layout="wide",
+)
+
 st.title("Shorrocks Dimensional Decomposition of M1")
+st.write(
+    "This app derives the symbolic Shorrocks contribution of each dimension "
+    "for a binary deprivation profile."
+)
 
-# Step 1: Input number of dimensions
+# Choose the number of dimensions.
 max_dims = 5
-d = st.number_input("Enter number of dimensions (max 5):", min_value=1, max_value=max_dims, value=3)
+d = int(
+    st.number_input(
+        "Number of dimensions",
+        min_value=1,
+        max_value=max_dims,
+        value=3,
+        step=1,
+    )
+)
 
-dim_names = [chr(97 + i) for i in range(d)]  # ['a', 'b', 'c', ...]
+dim_names = list(string.ascii_lowercase[:d])
 
-# Step 2: Generate all 2^d combinations (0 = not deprived, 1 = deprived)
-combos = list(itertools.product([1, 0], repeat=d))
-combo_df = pd.DataFrame(combos, columns=dim_names)
+# Generate every binary profile: 0 = not deprived, 1 = deprived.
+profiles = list(itertools.product([0, 1], repeat=d))
+profile_df = pd.DataFrame(profiles, columns=dim_names)
 
-# Display combinations matrix
-st.subheader("Matrix of Combinations (1 = deprived, 0 = not deprived)")
-st.dataframe(combo_df.astype(str))
+st.subheader("All deprivation profiles")
+st.caption("In the matrix, 1 means deprived and 0 means not deprived.")
+st.dataframe(profile_df, hide_index=True, use_container_width=True)
 
-# Step 4: Ask user to proceed with Shorrocks decomposition
-if st.button("Do you want to see the dimensional contribution based on Shorrocks approach?"):
-    expressions = {}
+
+def profile_label(profile):
+    """Display a profile using dimension names in place of 1s."""
+    labels = [
+        dim_names[i] if value == 1 else "0"
+        for i, value in enumerate(profile)
+    ]
+    return f"M({', '.join(labels)})"
+
+
+def coalition_label(coalition):
+    """Display a coalition, such as {a, c}, or the empty set."""
+    members = [dim_names[i] for i, value in enumerate(coalition) if value == 1]
+    return "{" + ", ".join(members) + "}" if members else "∅"
+
+
+def fraction_latex(value):
+    """Format an exact fraction for display in a LaTeX equation."""
+    value = Fraction(value)
+    if value.denominator == 1:
+        return str(value.numerator)
+    return rf"\frac{{{value.numerator}}}{{{value.denominator}}}"
+
+
+if st.button("Show dimensional contributions", type="primary"):
+    st.subheader("Shorrocks contribution by dimension")
+
     for j, dim in enumerate(dim_names):
-        st.markdown(f"### Shorrocks Decomposition for Dimension '{dim}'")
+        detail_rows = []
+        terms = []
 
-        # Step 5: Split into S1 and S0
-        S1 = combo_df[combo_df[dim] == 1].copy()
-        S0 = combo_df[combo_df[dim] == 0].copy()
-        st.markdown("#### S1 (Combinations where dimension is present):")
-        st.dataframe(S1.astype(str))
+        # For each coalition S that excludes dimension j, calculate:
+        # |S|! (d - |S| - 1)! / d! × [M(S ∪ {j}) - M(S)]
+        other_dimensions = [i for i in range(d) if i != j]
 
-        st.markdown("#### S0 (Combinations where dimension is absent):")
-        st.dataframe(S0.astype(str))
+        for other_values in itertools.product([0, 1], repeat=d - 1):
+            coalition = [0] * d
+            for i, value in zip(other_dimensions, other_values):
+                coalition[i] = value
 
-        time.sleep(2)
-        st.markdown("Now let the sum of elements in the of any row t in S₁ʲ be δ(t) and of any row t' in S₀ʲ be δ(t')")
+            coalition_size = sum(coalition)
+            weight = Fraction(
+                math.factorial(coalition_size)
+                * math.factorial(d - coalition_size - 1),
+                math.factorial(d),
+            )
 
-        # Updated Heading
-        st.markdown(f"<h4 style='font-size:26px;'>Deriving C<sub>{dim}</sub>(M)</h4>", unsafe_allow_html=True)
-        st.markdown("<span style='font-size:14px'>Eq. 1: Let Cj(M) = X - Y</span>", unsafe_allow_html=True)
-        time.sleep(1)
-        st.markdown("<span style='font-size:14px'>Eq. 2: Solving X & Y separately</span>", unsafe_allow_html=True)
-        time.sleep(1)
-        st.markdown("<span style='font-size:14px'>Eq. 3: Now X</span>", unsafe_allow_html=True)
+            profile_without_j = tuple(coalition)
 
-        expr_lines = []
-        eq_counter = 4
-        for idx, row in S1.iterrows():
-            delta_t = int(row.sum())
-            w_t = (math.factorial(delta_t - 1) * math.factorial(d - delta_t)) / math.factorial(d)
-            label = "M(" + ",".join([dim_names[i] if row[i]==1 else "0" for i in range(d)]) + ")"
-            step = f"({delta_t - 1})!·({d - delta_t})!/({d})!*{label}"
-            st.markdown(f"<span style='font-size:14px'>Eq. {eq_counter}: {step}</span>", unsafe_allow_html=True)
-            expr_lines.append(f"+ {int(w_t * math.factorial(d))}/{math.factorial(d)}·{label}")
-            time.sleep(1)
-            eq_counter += 1
+            profile_with_j = coalition.copy()
+            profile_with_j[j] = 1
+            profile_with_j = tuple(profile_with_j)
 
-        st.markdown(f"<span style='font-size:14px'>Eq. {eq_counter}: Now calculating Y</span>", unsafe_allow_html=True)
-        eq_counter += 1
+            detail_rows.append(
+                {
+                    "Coalition S": coalition_label(coalition),
+                    "|S|": coalition_size,
+                    "M(S)": profile_label(profile_without_j),
+                    f"M(S ∪ {{{dim}}})": profile_label(profile_with_j),
+                    "Weight": str(weight),
+                }
+            )
 
-        for idx, row in S0.iterrows():
-            delta_tp = int(row.sum())
-            w_tp = (math.factorial(delta_tp) * math.factorial(d - 1 - delta_tp)) / math.factorial(d)
-            label = "M(" + ",".join([dim_names[i] if row[i]==1 else "0" for i in range(d)]) + ")"
-            step = f"{delta_tp}!·({d - 1 - delta_tp})!/({d})!*{label}"
-            st.markdown(f"<span style='font-size:14px'>Eq. {eq_counter}: {step}</span>", unsafe_allow_html=True)
-            expr_lines.append(f"- {int(w_tp * math.factorial(d))}/{math.factorial(d)}·{label}")
-            time.sleep(1)
-            eq_counter += 1
+            terms.append((1, weight, profile_with_j))
+            terms.append((-1, weight, profile_without_j))
 
-        # Combine and clean up + - issues
-        full_expr = " ".join(expr_lines)
-        full_expr = full_expr.replace("+ -", "-").strip()
-        expression = f"C({dim}) = {full_expr}"
+        with st.expander(f"Contribution of dimension {dim}", expanded=True):
+            st.latex(
+                rf"C_{{{dim}}}(M) = "
+                rf"\sum_{{S \subseteq N \setminus \{{{dim}\}}}} "
+                rf"\frac{{|S|!(d-|S|-1)!}}{{d!}}"
+                rf"\left[M(S \cup \{{{dim}\}})-M(S)\right]"
+            )
 
-        st.markdown(f"<pre style='font-size:36px; font-weight:bold; font-style:italic; color:darkblue;'>{expression}</pre>", unsafe_allow_html=True)
-        expressions[dim] = expression
-        st.divider()
+            st.dataframe(
+                pd.DataFrame(detail_rows),
+                hide_index=True,
+                use_container_width=True,
+            )
 
-    # Step 8: Sum all contributions and show algebraic cancellation
-    st.markdown("### Final Step: Verifying Total Contribution")
-    st.markdown("C<sub>a</sub>(M) + C<sub>b</sub>(M) + ... = M", unsafe_allow_html=True)
-    st.markdown("Each + and - term from S₁ and S₀ respectively cancel out or contribute positively, leading to total M")
-    st.subheader("Symbolic Expressions")
-    for dim in dim_names:
-        st.markdown(f"<pre style='font-size:36px; font-weight:bold; font-style:italic; color:darkblue;'>{expressions[dim]}</pre>", unsafe_allow_html=True)
-    st.success("As we used all 2^d combinations and weights based on Shorrocks, sum of contributions exactly equals M")
+            expression_parts = []
+            for sign, weight, profile in terms:
+                sign_text = "-" if sign < 0 else "+"
+                coefficient = fraction_latex(weight)
+                value_label = profile_label(profile)
+
+                if not expression_parts:
+                    prefix = "-" if sign < 0 else ""
+                else:
+                    prefix = f" {sign_text} "
+
+                expression_parts.append(
+                    rf"{prefix}{coefficient}\,{value_label}"
+                )
+
+            st.latex(
+                rf"C_{{{dim}}}(M) = "
+                + "".join(expression_parts)
+            )
+
+    st.subheader("Efficiency check")
+    st.latex(
+        r"\sum_{j=1}^{d} C_j(M)"
+        r" = M(\text{all dimensions}) - M(\varnothing)"
+    )
+    st.caption(
+        "If the value for the empty set of dimensions is zero, "
+        "the contributions sum to M(all dimensions)."
+    )
+    st.success("The contribution weights are calculated exactly as fractions.")
